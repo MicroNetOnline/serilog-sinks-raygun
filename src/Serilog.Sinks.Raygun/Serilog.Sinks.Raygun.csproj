@@ -19,16 +19,21 @@
     <AssemblyVersion>3.0.0.0</AssemblyVersion>
     <FileVersion>3.0.0.0</FileVersion>
   </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|netstandard2.0|AnyCPU'">
+    <DefineConstants>TRACE;DEBUG</DefineConstants>
+  </PropertyGroup>
   
   <ItemGroup Condition="'$(TargetFramework)' == 'net461'">
-    <PackageReference Include="Mindscape.Raygun4Net" Version="5.5.2" />
+    <PackageReference Include="Mindscape.Raygun4Net" Version="5.5.4" />
+	<Reference Include="System.Web" />
   </ItemGroup>
   
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
     <PackageReference Include="mindscape.Raygun4Net.AspNetCore" Version="5.5.0" />
   </ItemGroup>
 
-  <ItemGroup>	
+  <ItemGroup>		
 	<PackageReference Include="Serilog" Version="2.6.0" />
   </ItemGroup>
 

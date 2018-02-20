@@ -13,10 +13,8 @@
 // limitations under the License.
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using System.Web;
 using Mindscape.Raygun4Net;
 using Mindscape.Raygun4Net.Builders;
 using Mindscape.Raygun4Net.Messages;
@@ -33,6 +31,7 @@ namespace Serilog.Sinks.Raygun
         readonly IFormatProvider _formatProvider;
         readonly string _userNameProperty;
         readonly string _applicationVersionProperty;
+        readonly string _applicationKey;
         readonly IEnumerable<string> _tags;
         readonly IEnumerable<string> _ignoredFormFieldNames;
         readonly string _groupKeyProperty;
@@ -71,6 +70,7 @@ namespace Serilog.Sinks.Raygun
             _ignoredFormFieldNames = ignoredFormFieldNames ?? Enumerable.Empty<string>();
             _groupKeyProperty = groupKeyProperty;
             _tagsProperty = tagsProperty;
+            _applicationKey = applicationKey;
 
             _client = new RaygunClient(applicationKey);
             if (wrapperExceptions != null)
@@ -94,41 +94,71 @@ namespace Serilog.Sinks.Raygun
             properties.Add("RenderedLogMessage", logEvent.RenderMessage(_formatProvider));
             properties.Add("LogMessageTemplate", logEvent.MessageTemplate.Text);
 
-            // Create new message
-            var raygunMessage = new RaygunMessage
-            {
-                OccurredOn = logEvent.Timestamp.UtcDateTime
-            };
+            // ReSharper disable once JoinDeclarationAndInitializer
+            IRaygunMessageBuilder builder;
 
+#if NETSTANDARD2_0
+
+            builder = RaygunAspNetCoreMessageBuilder.New(new RaygunSettings
+            {
+                ApiKey = _applicationKey                
+            });
+
+#else
+            builder = RaygunMessageBuilder.New;
+#endif
+            
             // Add exception when available
             if (logEvent.Exception != null)
-                raygunMessage.Details.Error = RaygunErrorMessageBuilder.Build(logEvent.Exception);
+            {
+                builder.SetExceptionDetails(logEvent.Exception);
+            }
 
             // Add user when requested
             if (!string.IsNullOrWhiteSpace(_userNameProperty) &&
                 logEvent.Properties.ContainsKey(_userNameProperty) &&
                 logEvent.Properties[_userNameProperty] != null)
             {
-                raygunMessage.Details.User = new RaygunIdentifierMessage(logEvent.Properties[_userNameProperty].ToString());
+                builder.SetUser(new RaygunIdentifierMessage(logEvent.Properties[_userNameProperty].ToString()));
             }
 
             // Add version when requested
-            if (!String.IsNullOrWhiteSpace(_applicationVersionProperty) &&
+            if (!string.IsNullOrWhiteSpace(_applicationVersionProperty) &&
                 logEvent.Properties.ContainsKey(_applicationVersionProperty) &&
                 logEvent.Properties[_applicationVersionProperty] != null)
             {
-                raygunMessage.Details.Version = logEvent.Properties[_applicationVersionProperty].ToString("l", null);
+                builder.SetVersion(logEvent.Properties[_applicationVersionProperty].ToString("l", null));
             }
 
-            // Build up the rest of the message
-            raygunMessage.Details.Environment = new RaygunEnvironmentMessage();
-            raygunMessage.Details.Tags = tags;
-            raygunMessage.Details.UserCustomData = properties;
-            raygunMessage.Details.MachineName = Environment.MachineName;
+            builder
+                .SetEnvironmentDetails()
+                .SetTags(tags)
+                .SetUserCustomData(properties)
+                .SetMachineName(Environment.MachineName)
+                .SetClientDetails();
+
+#if !NETSTANDARD2_0
+            if (System.Web.HttpContext.Current != null)
+            {
+                // Request message is built here instead of raygunClient.Send so RequestMessageOptions have to be constructed here
+                var requestMessageOptions = new RaygunRequestMessageOptions(_ignoredFormFieldNames,
+                    Enumerable.Empty<string>(), Enumerable.Empty<string>(), Enumerable.Empty<string>());
+
+                ((RaygunMessageBuilder)builder).SetHttpDetails(System.Web.HttpContext.Current, requestMessageOptions);
+            }
+#endif
+
+            // Create new message
+            var raygunMessage = builder.Build();
+
+            // Can't use builder.SetTimeStamp(logEvent.Timestamp.UtcDateTime) as AspNetCore version does not have it defined
+            raygunMessage.OccurredOn = logEvent.Timestamp.UtcDateTime;
 
             // Add the custom group key when provided
             if (properties.TryGetValue(_groupKeyProperty, out var customKey))
+            {
                 raygunMessage.Details.GroupingKey = customKey.ToString();
+            }
 
             // Add additional custom tags
             if (properties.TryGetValue(_tagsProperty, out var eventTags) && eventTags is object[])
